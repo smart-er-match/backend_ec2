@@ -1,0 +1,33 @@
+# Environments
+.venv/
+env/
+venv/
+ENV/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Large AI Models & Adapters
+*.gguf
+*.safetensors
+학습했던코드/qwen_finetuned.Q8_0.gguf
+ai_server/adapter_model.safetensors
+ai_server/adapter.gguf
+
+# External Repositories
+llama_cpp_repo/
+
+# Static & Media
+staticfiles/
+media/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project specific
+monitor_cpu.py.log
+ai_server.log
