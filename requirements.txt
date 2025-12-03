@@ -19,6 +19,5 @@ sqlparse==0.5.3
 typing_extensions==4.15.0
 urllib3==2.5.0
 xmltodict==0.13.0
-drf-yasg==1.21.7
 djangorestframework-simplejwt==5.3.1
 django-cron==0.6.0
