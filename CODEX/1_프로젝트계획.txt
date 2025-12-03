@@ -1,0 +1,227 @@
+1차 계획안 보완본 (기존 내용 유지 + 추가 메모)
+
+원문 계획
+환경 :
+	백앤드:
+		- ec2(ubuntu 22.04 t3-large
+		- ssh는 개발자 ip만 열어두고 http는 프론트의 보안그룹만 허용함) db는 백앤드 ec2안에 포스트그레를 사용함
+		- 동적배포로 nginx, db, 장고를 도커에 올림
+		- 퍼블릭ip 43.203.116.205, 프라이빗ip 172.31.16.191
+
+	프론트:
+		- ec2(ubuntu 22.04 t3-medium
+		- ssh는 개발자 ip만 열어두고 http, https 는 전체오픈(서비스 할것이기 때문)
+		- 서비스할 도메인은 구매할 지 안할지 고려중
+		- 퍼블릭 ip 13.209.99.166, 프라이빗ip 172.31.40.46
+		- 사용자 브라우저는 http://13.209.99.166 or 고려중인 도메인을 베이스로 접속함
+		- nginx에선 사용자의 요청을 받아 ex)http://13.209.99.166/api/login or 도메인/api/login  프록시 전환해서 172.31.16.191/login 과 같이 백앤드와 소통함
+		- 모바일에서 apk 다운받고 빈껍데기에 url만 접속하게 해서 동적배포, 자동배포할예정(dev로 실시간 자동화 배포)
+
+백앤드는 프론트의 요청만 받기위해 이렇게 보안그룹을 설정함
+
+	데이터:
+		- 메인 데이터 셋 https://www.data.go.kr/data/15096291/standard.do
+		- 데이터셋 참고
+
+	외부 api:
+		- 로그인 api 카카오, 네이버
+		- 길찾기 api tmap
+		- openai_api
+
+	일단 진행중이던 셋팅 파일들:
+		- settings.py(장고 settings.py)
+		- Dockerfile(백앤드쪽)
+		- docker-compose.yml
+		- .env
+		- default.conf(nginx)
+
+사용자 여정
+
+1. 사용자가 어플을 다운로드 받음 마켓 서비스는 X
+	- 사용자는 일반인, 구급요원 두 부류로 일단 생각함
+	- 어플 다운로드 받고 회원가입 및 카카오,네이버 로그인 직 후엔 일반인, 구급요원 구분 없이 일단은 일반인으로(제너럴로) 데이터 구분함
+		개발관점:
+			- 이메일, password로 로그인하는 화면과 아래에 카카오로 로그인하기, 네이버로 로그인하기, 이메일로 회원가입하기 있음
+			- 사용자가 모바일 환경이라면 쿠키 초기화 잘 안하니까 세션 계속 유지시킴
+			- 웹은 세션 1시간으로 두고 쿠키에 최근 로그인한것에 따라 최근 어떤 기능으로 로그인함 할 수 있게
+			- 통합회원은 구현 안함
+	- 회원가입 완료 후 이메일 회원가입, 카카오, 네이버 구분없이 자동 로그인 됨
+	- 일반인은 그대로 이용하지만 구급요원인 사람은 회원정보 탭에서 구급요원 인증하기가 있음 - 회원가입 후 메인화면에서 "의료진 및 구급요원이신가요?" 최초 딱 한번만 물어봄 -> 맞다고 하면 회원정보 탭으로 이동 아니라고 하면 메인화면으로 이동 구급요원 인증하기 누르면 소속코드와 이름 휴대폰번호 입력하고 제출 -> 관리자가 직접 확인하고 승인 하는 구조임
+
+2. 메인 서비스:
+	0. 기본으로 상시 진행되는것:
+		- http://apis.data.go.kr/B552657/ErmctInfoInqireService/getEmrrmRltmUsefulSckbdInfoInqire 에서 응급실 실시간 가용병상정보를 5분 주기로 응답받음
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?> 
+<response>
+<header>
+<resultCode>00</resultCode>
+<resultMsg>NORMAL SERVICE.</resultMsg>
+</header>
+<body>
+<items>
+<item>
+<dutyName>경상국립대학교병원</dutyName>
+<dutyTel3>055-750-8282</dutyTel3>
+<hpid>A2800001</hpid>
+<hv10>Y</hv10>
+<hv11>Y</hv11>
+<hv13>2</hv13>
+<hv14>2</hv14>
+<hv18>0</hv18>
+<hv2>0</hv2>
+<hv24>6</hv24>
+<hv25>11</hv25>
+<hv27>6</hv27>
+<hv28>3</hv28>
+<hv29>0</hv29>
+<hv3>4</hv3>
+<hv30>0</hv30>
+<hv31>1</hv31>
+<hv34>4</hv34>
+<hv35>1</hv35>
+<hv36>5</hv36>
+<hv38>8</hv38>
+<hv40>8</hv40>
+<hv41>7</hv41>
+<hv42>Y</hv42>
+<hv5>Y</hv5>
+<hv7>Y</hv7>
+<hvamyn>Y</hvamyn>
+<hvangioayn>Y</hvangioayn>
+<hvcrrtayn>Y</hvcrrtayn>
+<hvctayn>Y</hvctayn>
+<hvec>14</hvec>
+<hvecmoayn>Y</hvecmoayn>
+<hvgc>275</hvgc>
+<hvhypoayn>Y</hvhypoayn>
+<hvidate>20230414092700</hvidate>
+<hvincuayn>Y</hvincuayn>
+<hvmriayn>Y</hvmriayn>
+<hvncc>19</hvncc>
+<hvoc>9</hvoc>
+<hvoxyayn>N1</hvoxyayn>
+<hvs01>28</hvs01>
+<hvs02>3</hvs02>
+<hvs03>0</hvs03>
+<hvs04>0</hvs04>
+<hvs05>14</hvs05>
+<hvs06>8</hvs06>
+<hvs07>9</hvs07>
+<hvs08>25</hvs08>
+<hvs15>6</hvs15>
+<hvs18>3</hvs18>
+<hvs19>30</hvs19>
+<hvs21>20</hvs21>
+<hvs22>15</hvs22>
+<hvs24>23</hvs24>
+<hvs25>7</hvs25>
+<hvs26>7</hvs26>
+<hvs27>4</hvs27>
+<hvs28>2</hvs28>
+<hvs29>4</hvs29>
+<hvs30>12</hvs30>
+<hvs31>10</hvs31>
+<hvs32>23</hvs32>
+<hvs33>6</hvs33>
+<hvs34>2</hvs34>
+<hvs35>16</hvs35>
+<hvs38>731</hvs38>
+<hvs46>2</hvs46>
+<hvs47>3</hvs47>
+<hvs51>6</hvs51>
+<hvs56>6</hvs56>
+<hvs57>11</hvs57>
+<hvs59>6</hvs59>
+<hvventiayn>Y</hvventiayn>
+<hvventisoayn>Y</hvventisoayn>
+<phpid>A2800001</phpid>
+<rnum>1</rnum>
+</item>
+</items>
+<numOfRows>10</numOfRows>
+<pageNo>1</pageNo>
+<totalCount>6</totalCount>
+</body>
+</response>
+		이러한 구조임 아이템은 여러개일 수 있음 stage를 입력 안한채로 모든 지역의 정보를 5분마다 데이터를 최신화 할 것임
+				
+
+
+	1 일반인에게는
+		1-1. 위치입력
+			- 내 위치
+			- 지도로 위치선택
+			- 텍스트로 위치 입력
+			- 몇킬로미터 반경 설정할 수 있음 안하면 디폴트 10km, 최소 10
+			개발관점:
+				- http://apis.data.go.kr/B552657/ErmctInfoInqireService/getEgytLcinfoInqire 이 url에서 내 위치의 위도, 경도를 넣어 요청을 보내면 아래와 같은 응답 받을 수 있음
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?> 
+- <response>
+- <header>
+  <resultCode>00</resultCode> 
+  <resultMsg>NORMAL SERVICE.</resultMsg> 
+  </header>
+- <body>
+- <items>
+- <item>
+  <cnt>65</cnt> 
+  <distance>0</distance> 
+  <dutyAddr>서울특별시 강남구 일원동 50 (일원로 81)</dutyAddr> 
+  <dutyDiv>A</dutyDiv> 
+  <dutyDivName>종합병원</dutyDivName> 
+  <dutyFax>02-3410-0017</dutyFax> 
+  <dutyName>(사)삼성생명공익재단 삼성서울병원</dutyName> 
+  <dutyTel1>02-3410-2114</dutyTel1> 
+  <endTime>1530</endTime> 
+  <hpid>A0000028</hpid> 
+  <latitude>37.488132562487905</latitude> 
+  <longitude>127.08515659273706</longitude> 
+  <rnum>36</rnum> 
+  <startTime>0830</startTime> 
+  </item>
+  </items>
+  <numOfRows>1</numOfRows> 
+  <pageNo>1</pageNo> 
+  <totalCount>65</totalCount> 
+  </body>
+  </response> 
+				사용자의 위치에서 가까운 병원부터 응답을 받을 수 있음
+				이 데이터와 사용자가 입력한 범위(km 반경)를 필터링하고
+				위에서 걸러진 데이터(위치, 반경 고려)와 5분 주기 받는 데이터와 교집합(필터링) 한 후 대기
+				
+				
+
+		1-2. 증상입력
+			- 카테고리를 신체의 부위선택 -> 외상, 내상 선택 -> 통증 정도 선택
+			- 카테고리에 없다면 텍스트로 직접 입력
+			- 이렇게 최대 5가지까지 입력가능
+			개발관점:
+				- 분류한 텍스트를 openai_api 모델을 기반으로 아까
+				'사용자의 위치에서 가까운 병원부터 응답을 받을 수 있음
+				이 데이터와 사용자가 입력한 범위(km 반경)를 필터링하고
+				이 데이터와 5분 주기 받는 데이터를 합쳐(필드까지)'서 대기하고 있던 데이터에 병상이 있는지 확인하여 필터
+				
+		1-3. 서비스 제공
+			- 입력했던 정보들 기반으로 증상을 치료할 수 있는 진료과목 코드가 있는 병원 중 선택한 위치에서 가깝고 병상이 남아있는 병원을 리스트업해줌
+			- 이렇게 사용자의 니즈에 맞는 병원을 리스트업해주고
+			- 네이버지도연결, 티맵으로연결, 카카오맵으로 연결 버튼으로 사용자의 앱과 호환되게 or 앞선 기능이 어렵다면
+
+
+	2 구급요원
+		2-1 위치입력 : 일반사용자와 동일함
+		2-2 증상입력
+			- 여기부턴 추 후 작성
+
+
+
+추가 보완 메모 (기존 내용에 더해 명세/ERD/PRD/아키텍처 준비용)
+- 데이터 수집 주기 명시: 실시간 가용병상 5분, 위치/기본 정보 24시간. 실패 시 재시도(백오프)와 로그/알림(슬랙 웹훅 등) 필요.
+- 백업/복구: 백엔드 EC2 내 Postgres 스냅샷 일 1회 목표. 장애 시 복구 절차 별도 문서화 예정.
+- 로그/모니터링 최소셋: 로그인/인증 시도, 외부 API 호출 실패, 병상 동기화 성공/실패 건수. PII 마스킹 검토.
+- 계정 정책: 이메일과 소셜 계정 통합은 하지 않음. 이메일+소셜 중복 방지 규칙 정의 필요.
+- 권한: 기본 GENERAL, 구급요원 인증 승인 후 PARAMEDIC. 관리자 승인 플로우/대시보드 요구사항 추후 명세에 포함.
+- 검색/추천 로직 초안: 거리 필터(기본 10km 이상), 진료과 매핑(LLM 또는 룰셋), 병상 가용 정의(hv 필드 중 어떤 값으로 “가능” 판단할지) 설정 필요.
+- 지도 딥링크: 네이버/티맵/카카오 맵 우선, 인앱 뷰가 안되면 외부 앱 열기. 경로 요청시 TMAP/카카오 길찾기 API 사용 여부 결정.
+- 보안: SSH 제한 유지, HTTP는 프론트 보안그룹만 허용. 개인정보(이메일/휴대폰) 보관/삭제 정책, 탈퇴 처리 절차 정의 필요.
+- 테스트/배포: dev/stage/prod 분리, APK 웹뷰 동적 URL 교체 시 버전 관리와 롤백 절차 필요. 크론/배치 헬스체크 포함.
+- 향후 산출물 체크리스트: 명세서(로그인/소셜/구급요원 인증/추천/지도/관리자 승인), ERD(User/ParamedicInfo/Hospital/Status/Severe/Location/Department/SymptomMapping/SearchLog 등), PRD(KPI: 추천 응답 95p, 데이터 신선도), 아키텍처(프론트↔백엔드↔DB, 크론 5분/24시간, 소셜/지도/LLM 연동, 로깅·알림 경로).
