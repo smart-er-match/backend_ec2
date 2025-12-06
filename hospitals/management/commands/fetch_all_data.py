@@ -2,10 +2,10 @@ import requests
 import os
 from django.db import transaction
 from django.core.management.base import BaseCommand
-from hospitals.models import Hospital, HospitalRealtimeStatus, UpdateLog
+from hospitals.models import Hospital, HospitalRealtimeStatus, HospitalSevereMessage, UpdateLog
 
 class Command(BaseCommand):
-    help = '실시간 응급실 병상 정보를 갱신합니다. (중증질환 정보는 제외됨)'
+    help = '실시간 응급실 병상 정보와 중증질환 메시지를 갱신합니다.'
 
     def handle(self, *args, **options):
         KEY = os.getenv("NMC_API_KEY")
@@ -14,7 +14,9 @@ class Command(BaseCommand):
             return
 
         self.fetch_realtime_beds(KEY)
-        self.stdout.write(self.style.SUCCESS("실시간 병상 데이터 갱신 완료"))
+        self.fetch_severe_messages(KEY)
+        
+        self.stdout.write(self.style.SUCCESS("실시간 데이터(병상, 메시지) 갱신 완료"))
 
     def fetch_realtime_beds(self, key):
         url = "http://apis.data.go.kr/B552657/ErmctInfoInqireService/getEmrrmRltmUsefulSckbdInfoInqire"
@@ -34,12 +36,9 @@ class Command(BaseCommand):
                 if not Hospital.objects.filter(hpid=hpid).exists():
                     continue
 
-                # 정수형 필드 변환 (빈 문자열이나 None은 0으로)
                 def to_int(val):
-                    try:
-                        return int(val)
-                    except (ValueError, TypeError):
-                        return 0
+                    try: return int(val)
+                    except (ValueError, TypeError): return 0
 
                 defaults = {
                     'hv10': item.get('hv10'), 'hv11': item.get('hv11'),
@@ -77,3 +76,51 @@ class Command(BaseCommand):
 
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"실시간 병상 갱신 실패: {e}"))
+
+    def fetch_severe_messages(self, key):
+        url = "http://apis.data.go.kr/B552657/ErmctInfoInqireService/getEmrrmSrsillDissMsgInqire"
+        params = {'serviceKey': key, 'numOfRows': 5000, 'pageNo': 1, '_type': 'json'}
+        
+        try:
+            response = requests.get(url, params=params, timeout=30)
+            try:
+                data = response.json()
+            except:
+                self.stdout.write(self.style.ERROR("중증질환 메시지 JSON 파싱 실패"))
+                return
+
+            items = data.get('response', {}).get('body', {}).get('items', {}).get('item', [])
+            if isinstance(items, dict): items = [items]
+
+            with transaction.atomic():
+                # 전체 삭제 후 재생성
+                HospitalSevereMessage.objects.all().delete()
+                
+                msg_objects = []
+                for item in items:
+                    hpid = item.get('hpid')
+                    if not hpid: continue
+                    
+                    if not Hospital.objects.filter(hpid=hpid).exists():
+                        continue
+
+                    msg = HospitalSevereMessage(
+                        hospital_id=hpid,
+                        message=item.get('symBlkMsg'),
+                        message_type=item.get('symBlkMsgTyp'),
+                        severe_code=item.get('symTypCod'),
+                        severe_name=item.get('symTypCodMag'),
+                        display_yn=item.get('symOutDspYon'),
+                        display_method=item.get('symOutDspMth'),
+                        start_time=item.get('symBlkSttDtm'),
+                        end_time=item.get('symBlkEndDtm')
+                    )
+                    msg_objects.append(msg)
+                
+                HospitalSevereMessage.objects.bulk_create(msg_objects)
+                
+            UpdateLog.objects.update_or_create(update_key='severe_msg', defaults={})
+            self.stdout.write(f"중증질환 메시지: {len(msg_objects)}개 갱신")
+
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f"중증질환 메시지 갱신 실패: {e}"))
