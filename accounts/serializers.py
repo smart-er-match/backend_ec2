@@ -161,6 +161,7 @@ class FindEmailSerializer(serializers.Serializer):
 
 class SendAuthCodeSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
+    birth_date = serializers.DateField(required=True) # 생년월일 추가
 
 class VerifyAuthCodeSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
@@ -168,6 +169,7 @@ class VerifyAuthCodeSerializer(serializers.Serializer):
 
 class ResetPasswordSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
+    birth_date = serializers.DateField(required=True) # 생년월일 추가
     new_password = serializers.CharField(required=True)
     new_password_confirm = serializers.CharField(required=True)
 

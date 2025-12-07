@@ -204,6 +204,9 @@ class ChangePasswordView(APIView):
 
     def post(self, request):
         user = request.user
+        if user.sign_kind != User.SignKind.EMAIL:
+            return Response({"result": False, "message": "카카오/네이버 유저는 비밀번호를 변경할 수 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+
         serializer = ChangePasswordSerializer(data=request.data)
         if serializer.is_valid():
             if not user.check_password(serializer.validated_data['old_password']):
@@ -250,9 +253,21 @@ class SendAuthCodeView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         email = serializer.validated_data['email']
+        birth_date = serializer.validated_data['birth_date']
         
-        if not User.objects.filter(email=email, sign_kind=User.SignKind.EMAIL).exists():
-            return Response({"result": False, "message": "등록되지 않은 이메일입니다."}, status=status.HTTP_404_NOT_FOUND)
+        # 1. 이메일 가입자 우선 조회
+        user = User.objects.filter(email=email, sign_kind=User.SignKind.EMAIL).first()
+        
+        if user:
+            # 생년월일 체크
+            if user.birth_date != birth_date:
+                return Response({"result": False, "message": "사용자 정보가 일치하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            # 2. 소셜 가입자 확인
+            if User.objects.filter(email=email).exists():
+                return Response({"result": False, "message": "카카오/네이버 유저는 비밀번호를 찾을 수 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+            else:
+                return Response({"result": False, "message": "등록되지 않은 이메일입니다."}, status=status.HTTP_404_NOT_FOUND)
 
         code = str(random.randint(100000, 999999))
         
@@ -301,6 +316,13 @@ class VerifyAuthCodeView(APIView):
         email = serializer.validated_data['email']
         code = serializer.validated_data['code']
         
+        # 이메일 가입자 확인
+        user = User.objects.filter(email=email, sign_kind=User.SignKind.EMAIL).first()
+        if not user:
+            if User.objects.filter(email=email).exists():
+                return Response({"result": False, "message": "카카오/네이버 유저입니다."}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"result": False, "message": "사용자를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+
         try:
             record = EmailVerification.objects.get(email=email)
             
@@ -311,7 +333,6 @@ class VerifyAuthCodeView(APIView):
                 record.is_verified = True
                 record.save()
                 
-                user = User.objects.get(email=email, sign_kind=User.SignKind.EMAIL)
                 user.can_password_edit = True
                 user.save()
                 
@@ -329,11 +350,17 @@ class ResetPasswordView(APIView):
         serializer = ResetPasswordSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data['email']
+            birth_date = serializer.validated_data['birth_date']
             new_password = serializer.validated_data['new_password']
             
-            try:
-                user = User.objects.get(email=email, sign_kind=User.SignKind.EMAIL)
-                
+            # 이메일 가입자 확인
+            user = User.objects.filter(email=email, sign_kind=User.SignKind.EMAIL).first()
+            
+            if user:
+                # 생년월일 체크
+                if user.birth_date != birth_date:
+                    return Response({"result": False, "message": "사용자 정보가 일치하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+
                 if not user.can_password_edit:
                     return Response({"result": False, "message": "비밀번호 변경 권한이 없습니다. 먼저 인증을 진행해주세요."}, status=status.HTTP_403_FORBIDDEN)
                 
@@ -344,8 +371,10 @@ class ResetPasswordView(APIView):
                 UserLog.objects.create(user=user, action_type='PASSWORD_RESET', details="Password reset via email auth")
                 
                 return Response({"result": True, "message": "비밀번호가 재설정되었습니다."}, status=status.HTTP_200_OK)
-                
-            except User.DoesNotExist:
+            else:
+                # 소셜 가입자 확인
+                if User.objects.filter(email=email).exists():
+                    return Response({"result": False, "message": "카카오/네이버 유저는 비밀번호를 재설정할 수 없습니다."}, status=status.HTTP_403_FORBIDDEN)
                 return Response({"result": False, "message": "사용자를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
         
         return Response({"result": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)

@@ -37,8 +37,10 @@ class Command(BaseCommand):
                     continue
 
                 def to_int(val):
-                    try: return int(val)
-                    except (ValueError, TypeError): return 0
+                    try:
+                        return int(val)
+                    except (ValueError, TypeError):
+                        return 0
 
                 defaults = {
                     'hv10': item.get('hv10'), 'hv11': item.get('hv11'),
