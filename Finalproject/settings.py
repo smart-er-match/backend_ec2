@@ -20,7 +20,7 @@ load_dotenv(BASE_DIR / ".env")  # 로컬 실행 시에도 .env 읽기 (도커에
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
 DEBUG = os.getenv("DJANGO_DEBUG") == "True"
-TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "Asia/Seoul")
+TIME_ZONE = 'Asia/Seoul'
 
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",")
 CSRF_TRUSTED_ORIGINS = os.getenv("DJANGO_TRUSTED_ORIGINS", "").split(",")
@@ -30,8 +30,9 @@ PARAMETIC_URI = os.getenv("PARAMETIC_URI", "https://034mcfc4sd.execute-api.ap-no
 PARAMETIC_TOKEN = os.getenv("PARAMETIC_TOKEN", "Bearer m_license_secret_token_123")
 
 OPENAI_KEY = os.getenv("OPENAI_KEY")
-
 NMC_API_KEY = os.getenv("NMC_API_KEY")
+
+
 # Application definition
 
 INSTALLED_APPS = [
