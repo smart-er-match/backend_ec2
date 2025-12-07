@@ -24,6 +24,27 @@ class Hospital(models.Model):
     def __str__(self):
         return f"[{self.hpid}] {self.name}"
 
+class Review(models.Model):
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='reviews')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='hospital_reviews')
+    content = models.TextField()
+    rating = models.IntegerField(default=5) # 1~5점
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.hospital.name} - {self.user.name}"
+
+class Comment(models.Model):
+    review = models.ForeignKey(Review, on_delete=models.CASCADE, related_name='comments')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='review_comments')
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Comment by {self.user.name}"
+
 class HospitalRealtimeStatus(models.Model):
     hospital = models.OneToOneField(Hospital, on_delete=models.CASCADE, related_name='realtime_status')
     
@@ -104,8 +125,6 @@ class HospitalRealtimeStatus(models.Model):
 
 class HospitalSevereInfo(models.Model):
     hospital = models.OneToOneField(Hospital, on_delete=models.CASCADE, related_name='severe_info')
-    
-    # MKioskTy* 필드 (1~28 및 Msg)
     mkiosk_ty1 = models.CharField(max_length=20, blank=True, null=True)
     mkiosk_ty2 = models.CharField(max_length=20, blank=True, null=True)
     mkiosk_ty3 = models.CharField(max_length=20, blank=True, null=True)
@@ -118,18 +137,13 @@ class HospitalSevereInfo(models.Model):
     
     mkiosk_ty10 = models.CharField(max_length=20, blank=True, null=True)
     mkiosk_ty10msg = models.CharField(max_length=50, blank=True, null=True)
-    
     mkiosk_ty11 = models.CharField(max_length=20, blank=True, null=True)
-    
     mkiosk_ty12 = models.CharField(max_length=20, blank=True, null=True)
     mkiosk_ty12msg = models.CharField(max_length=50, blank=True, null=True)
-    
     mkiosk_ty13 = models.CharField(max_length=20, blank=True, null=True)
     mkiosk_ty14 = models.CharField(max_length=20, blank=True, null=True)
-    
     mkiosk_ty15 = models.CharField(max_length=20, blank=True, null=True)
     mkiosk_ty15msg = models.CharField(max_length=50, blank=True, null=True)
-    
     mkiosk_ty16 = models.CharField(max_length=20, blank=True, null=True)
     mkiosk_ty17 = models.CharField(max_length=20, blank=True, null=True)
     mkiosk_ty18 = models.CharField(max_length=20, blank=True, null=True)
@@ -141,24 +155,22 @@ class HospitalSevereInfo(models.Model):
     mkiosk_ty24 = models.CharField(max_length=20, blank=True, null=True)
     mkiosk_ty25 = models.CharField(max_length=20, blank=True, null=True)
     mkiosk_ty26 = models.CharField(max_length=20, blank=True, null=True)
-    
     mkiosk_ty27 = models.CharField(max_length=20, blank=True, null=True)
     mkiosk_ty27msg = models.CharField(max_length=50, blank=True, null=True)
-    
     mkiosk_ty28 = models.CharField(max_length=20, blank=True, null=True)
     
     last_updated = models.DateTimeField(auto_now=True)
 
 class HospitalSevereMessage(models.Model):
     hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='severe_messages')
-    message = models.TextField(blank=True, null=True) # symBlkMsg
-    message_type = models.CharField(max_length=20, blank=True, null=True) # symBlkMsgTyp (응급/중증)
-    severe_code = models.CharField(max_length=10, blank=True, null=True) # symTypCod (Y000 등)
-    severe_name = models.CharField(max_length=50, blank=True, null=True) # symTypCodMag
-    display_yn = models.CharField(max_length=5, blank=True, null=True) # symOutDspYon (Y/N)
-    display_method = models.CharField(max_length=10, blank=True, null=True) # symOutDspMth
-    start_time = models.CharField(max_length=20, blank=True, null=True) # symBlkSttDtm
-    end_time = models.CharField(max_length=20, blank=True, null=True) # symBlkEndDtm
+    message = models.TextField(blank=True, null=True)
+    message_type = models.CharField(max_length=20, blank=True, null=True)
+    severe_code = models.CharField(max_length=10, blank=True, null=True)
+    severe_name = models.CharField(max_length=50, blank=True, null=True)
+    display_yn = models.CharField(max_length=5, blank=True, null=True)
+    display_method = models.CharField(max_length=10, blank=True, null=True)
+    start_time = models.CharField(max_length=20, blank=True, null=True)
+    end_time = models.CharField(max_length=20, blank=True, null=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -172,7 +184,7 @@ class UserLocationLog(models.Model):
     sign_kind = models.IntegerField(default=1)
     latitude = models.FloatField()
     longitude = models.FloatField()
-    radius = models.IntegerField(default=10) # 반경 (km)
+    radius = models.IntegerField(default=10) 
     location_text = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

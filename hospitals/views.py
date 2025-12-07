@@ -1,17 +1,17 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
-from .models import UserLocationLog, HospitalRealtimeStatus, Hospital
-from .serializers import HospitalResponseSerializer
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from datetime import timedelta
+from .models import UserLocationLog, HospitalRealtimeStatus, Hospital, Review, Comment
+from .serializers import HospitalResponseSerializer, ReviewSerializer, CommentSerializer
 from .constants import HOSPITAL_FIELD_DESC
 from django.conf import settings
-from django.db.models import F
 import requests
 import json
-import os
 import math
 
-# 토글 스위치: True면 외부 API 사용, False면 내부 DB + 거리 계산 사용
 USE_NMC_API = False 
 
 class UserLocationView(APIView):
@@ -81,8 +81,6 @@ class GeneralSymptomView(APIView):
         if not symptoms:
             return Response({"result": False, "message": "Symptoms are required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1. 사용자 위치 가져오기
-        # 요청 데이터에 있으면 그걸 쓰고, 없으면 유저 정보 사용
         req_lat = data.get('latitude')
         req_lon = data.get('longitude')
         
@@ -98,19 +96,15 @@ class GeneralSymptomView(APIView):
 
         radius = user.radius if user.radius else 10
         
-        # 2. OpenAI 추천 필드 추출
         recommended_fields = self.get_recommended_fields(symptoms)
         
-        # 3. 병원 목록 조회 (API vs DB)
         if USE_NMC_API:
             nearby_hospitals = self.get_nearby_hospitals_from_api(user_lat, user_lon)
         else:
             nearby_hospitals = self.get_nearby_hospitals_from_db(user_lat, user_lon)
         
-        # 4. 반경 필터링
         filtered_hospitals = self.filter_by_radius(nearby_hospitals, radius)
         
-        # 5. 점수 계산 및 데이터 병합
         processed_data = []
         for item in filtered_hospitals:
             hpid = item['hpid']
@@ -139,7 +133,6 @@ class GeneralSymptomView(APIView):
             }
             processed_data.append(hospital_info)
             
-        # 6. 정렬 및 응답
         sorted_by_distance_data = sorted(processed_data, key=lambda x: x['distance'])
         serialized_distance = HospitalResponseSerializer(sorted_by_distance_data, many=True).data
         
@@ -199,7 +192,6 @@ class GeneralSymptomView(APIView):
             return {}
 
     def get_nearby_hospitals_from_api(self, lat, lon):
-        # 기존 로직 (NMC API)
         url = "http://apis.data.go.kr/B552657/ErmctInfoInqireService/getEgytLcinfoInqire"
         key = settings.NMC_API_KEY
         params = {
@@ -240,7 +232,6 @@ class GeneralSymptomView(APIView):
             return []
 
     def get_nearby_hospitals_from_db(self, lat, lon):
-        # DB 기반 거리 계산 (Haversine 공식)
         hospitals = Hospital.objects.all()
         results = []
         
@@ -262,7 +253,7 @@ class GeneralSymptomView(APIView):
         return results
 
     def haversine(self, lat1, lon1, lat2, lon2):
-        R = 6371  # 지구 반지름 (km)
+        R = 6371
         dLat = math.radians(lat2 - lat1)
         dLon = math.radians(lon2 - lon1)
         a = math.sin(dLat / 2) * math.sin(dLat / 2) + \
@@ -270,7 +261,7 @@ class GeneralSymptomView(APIView):
             math.sin(dLon / 2) * math.sin(dLon / 2)
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
         d = R * c
-        return round(d, 2) # 소수점 2자리 반올림
+        return round(d, 2)
 
     def filter_by_radius(self, hospitals, radius):
         sorted_hospitals = sorted(hospitals, key=lambda x: x['distance'])
@@ -304,3 +295,105 @@ class GeneralSymptomView(APIView):
                 matched_reasons.append(f"{HOSPITAL_FIELD_DESC.get(field, field)} ({weight}점)")
         
         return score, matched_reasons
+
+class ReviewView(APIView):
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def get(self, request, hpid):
+        reviews = Review.objects.filter(hospital__hpid=hpid).order_by('-created_at')
+        serializer = ReviewSerializer(reviews, many=True, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request, hpid):
+        hospital = get_object_or_404(Hospital, hpid=hpid)
+        serializer = ReviewSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            serializer.save(user=request.user, hospital=hospital)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class ReviewDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self, review_id):
+        return get_object_or_404(Review, id=review_id)
+
+    def check_permission(self, review, user):
+        if review.user != user:
+            return False
+        return True
+
+    def check_editable(self, review):
+        # 3일 이내인지 확인
+        if timezone.now() - review.created_at > timedelta(days=3):
+            return False
+        return True
+
+    def put(self, request, review_id):
+        review = self.get_object(review_id)
+        if not self.check_permission(review, request.user):
+            return Response({"message": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+        
+        if not self.check_editable(review):
+            return Response({"message": "작성 후 3일이 지나 수정할 수 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = ReviewSerializer(review, data=request.data, partial=True, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, review_id):
+        review = self.get_object(review_id)
+        if not self.check_permission(review, request.user):
+            return Response({"message": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+        
+        review.delete()
+        return Response({"message": "삭제되었습니다."}, status=status.HTTP_204_NO_CONTENT)
+
+class CommentView(APIView):
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def post(self, request, review_id):
+        review = get_object_or_404(Review, id=review_id)
+        serializer = CommentSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            serializer.save(user=request.user, review=review)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class CommentDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self, comment_id):
+        return get_object_or_404(Comment, id=comment_id)
+
+    def check_permission(self, comment, user):
+        return comment.user == user
+
+    def check_editable(self, comment):
+        if timezone.now() - comment.created_at > timedelta(days=3):
+            return False
+        return True
+
+    def put(self, request, comment_id):
+        comment = self.get_object(comment_id)
+        if not self.check_permission(comment, request.user):
+            return Response({"message": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+        
+        if not self.check_editable(comment):
+            return Response({"message": "작성 후 3일이 지나 수정할 수 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = CommentSerializer(comment, data=request.data, partial=True, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, comment_id):
+        comment = self.get_object(comment_id)
+        if not self.check_permission(comment, request.user):
+            return Response({"message": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+        
+        comment.delete()
+        return Response({"message": "삭제되었습니다."}, status=status.HTTP_204_NO_CONTENT)

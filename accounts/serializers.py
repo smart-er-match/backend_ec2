@@ -1,9 +1,9 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from .models import ParamedicAuthHistory
 import re
 
 User = get_user_model()
-
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -24,8 +24,11 @@ class UserSerializer(serializers.ModelSerializer):
             'license_number',
             'license_date',
             'is_license_verified',
+            'latitude',
+            'longitude',
+            'location',
+            'radius'
         ]
-
 
 class SignupSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
@@ -74,7 +77,6 @@ class SignupSerializer(serializers.ModelSerializer):
         if not attrs.get('birth_date'):
             raise serializers.ValidationError({'birth_date': 'This field is required.'})
 
-        # email이 비어 있으면 username(프론트에서 전달한 이메일)을 사용한다. 둘 다 없으면 에러.
         email_value = attrs.get('email') or attrs.get('username')
         if not email_value:
             raise serializers.ValidationError({'email': '이메일이 필요합니다.'})
@@ -110,7 +112,6 @@ class SignupSerializer(serializers.ModelSerializer):
         )
         return user
 
-
 class ParamedicAuthSerializer(serializers.Serializer):
     LOGINOPTION = serializers.CharField(required=True)
     JUMIN = serializers.CharField(required=True, min_length=7, max_length=7)
@@ -124,11 +125,9 @@ class ParamedicAuthSerializer(serializers.Serializer):
         jumin = attrs.get('JUMIN')
         phone_num = attrs.get('PHONENUM')
 
-        # 통신사 인증 시 TELECOMGUBUN 필수
         if login_option == '3' and not telecom_gubun:
             raise serializers.ValidationError({"TELECOMGUBUN": "통신사 로그인 시 통신사 구분은 필수입니다."})
 
-        # 주민번호 형식 (숫자 7자리, 뒷자리 1~4)
         if not jumin.isdigit():
             raise serializers.ValidationError({"JUMIN": "주민등록번호는 숫자여야 합니다."})
         
@@ -136,8 +135,43 @@ class ParamedicAuthSerializer(serializers.Serializer):
         if last_digit not in ['1', '2', '3', '4']:
              raise serializers.ValidationError({"JUMIN": "주민등록번호 뒷자리가 올바르지 않습니다. (1, 2, 3, 4 중 하나)"})
 
-        # 폰번호 숫자 확인
         if not phone_num.isdigit():
             raise serializers.ValidationError({"PHONENUM": "휴대폰 번호는 숫자여야 합니다."})
 
+        return attrs
+
+class ProfileUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['name', 'phone_number', 'gender']
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True)
+    new_password_confirm = serializers.CharField(required=True)
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['new_password_confirm']:
+            raise serializers.ValidationError({"new_password": "새 비밀번호가 일치하지 않습니다."})
+        return attrs
+
+class FindEmailSerializer(serializers.Serializer):
+    name = serializers.CharField(required=True)
+    birth_date = serializers.DateField(required=True)
+
+class SendAuthCodeSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+
+class VerifyAuthCodeSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+    code = serializers.CharField(required=True, min_length=6, max_length=6)
+
+class ResetPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+    new_password = serializers.CharField(required=True)
+    new_password_confirm = serializers.CharField(required=True)
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['new_password_confirm']:
+            raise serializers.ValidationError({"new_password": "새 비밀번호가 일치하지 않습니다."})
         return attrs

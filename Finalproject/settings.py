@@ -32,6 +32,14 @@ PARAMETIC_TOKEN = os.getenv("PARAMETIC_TOKEN", "Bearer m_license_secret_token_12
 OPENAI_KEY = os.getenv("OPENAI_KEY")
 NMC_API_KEY = os.getenv("NMC_API_KEY")
 
+# Email Configuration
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = 'smart.er.match.service@gmail.com'
+EMAIL_HOST_PASSWORD = 'tqvu vioc okwa grqr' # 앱 비밀번호
+
 
 # Application definition
 
