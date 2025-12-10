@@ -4,17 +4,49 @@ from rest_framework.views import APIView
 from rest_framework.decorators import api_view
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
-from django.db import models
-from .serializers import SignupSerializer, UserSerializer
+from django.core.mail import send_mail
+from django.utils import timezone
+from django.conf import settings
+from .serializers import (
+    SignupSerializer, UserSerializer, ParamedicAuthSerializer, 
+    ProfileUpdateSerializer, ChangePasswordSerializer, FindEmailSerializer,
+    SendAuthCodeSerializer, VerifyAuthCodeSerializer, ResetPasswordSerializer
+)
+from .models import ParamedicAuthHistory, EmailVerification, UserLog
+import requests
+import random
 import uuid
+import os
+from datetime import timedelta
 
 User = get_user_model()
-
 
 class SignupView(generics.CreateAPIView):
     serializer_class = SignupSerializer
     permission_classes = [permissions.AllowAny]
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        
+        # 중복 가입 확인 로직
+        user_data = serializer.data
+        name = request.data.get('name')
+        birth_date = request.data.get('birth_date')
+        
+        duplicate_count = 0
+        if name and birth_date:
+            duplicate_count = User.objects.filter(
+                name=name, 
+                birth_date=birth_date, 
+                sign_kind=User.SignKind.EMAIL
+            ).count()
+        
+        user_data['is_multiple_accounts'] = duplicate_count >= 3
+        
+        return Response(user_data, status=status.HTTP_201_CREATED, headers=headers)
 
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -43,33 +75,22 @@ class LoginView(APIView):
             'error_type': ''
         })
 
-# 로컬(username) 중복 체크: 이메일 회원(sign_kind=EMAIL)만 확인
-
 @api_view(['GET'])
 def signupuu(request):
         username = request.query_params.get("username")
         if not username:
-            # username 누락 시에도 bool_uu는 False로 응답한다.
             return Response({"bool_uu": False, "error": "username is required"}, status=status.HTTP_200_OK)
 
-        # 일반 회원(email sign_kind만)에서 이메일/아이디 중복을 확인한다.
         is_available = not User.objects.filter(
             email=username,
             sign_kind=User.SignKind.EMAIL
         ).exists()
         return Response({"bool_uu": is_available})
 
-
 class ParamedicAuthView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        from .serializers import ParamedicAuthSerializer, UserSerializer
-        from .models import ParamedicAuthHistory
-        from django.conf import settings
-        import requests
-
-        # 1. 입력 데이터 검증
         serializer = ParamedicAuthSerializer(data=request.data)
         if not serializer.is_valid():
             return Response({"result": False, "message": "Validation Error", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
@@ -79,42 +100,47 @@ class ParamedicAuthView(APIView):
         dsnm = data['DSNM']
         phone_num = data['PHONENUM']
         
-        # 2. 주민번호 파싱 (생년월일, 성별)
-        # 7자리: YYMMDD + G
         yy = jumin[:2]
         mm = jumin[2:4]
         dd = jumin[4:6]
         gender_digit = jumin[6]
 
-        # 1900년대 vs 2000년대
         if gender_digit in ['1', '2']:
             full_year = f"19{yy}"
             gender_code = 'M' if gender_digit == '1' else 'F'
-        else: # 3, 4
+        else:
             full_year = f"20{yy}"
             gender_code = 'M' if gender_digit == '3' else 'F'
         
         birth_date = f"{full_year}-{mm}-{dd}"
 
-        # 3. 유저 정보 업데이트 (비어있는 필드 채우기)
         user = request.user
-        user.name = dsnm
-        user.phone_number = phone_num
-        user.birth_date = birth_date
-        user.gender = gender_code
-        user.save()
+        updated = False
+        if not user.name:
+            user.name = dsnm
+            updated = True
+        if not user.phone_number:
+            user.phone_number = phone_num
+            updated = True
+        if not user.birth_date:
+            user.birth_date = birth_date
+            updated = True
+        if not user.gender:
+            user.gender = gender_code
+            updated = True
+        
+        if updated:
+            user.save()
 
-        # 4. 파라메트릭 인증 요청 이력 저장
         auth_history = ParamedicAuthHistory.objects.create(
             user=user,
             login_option=data['LOGINOPTION'],
-            jumin=jumin, # 7자리 저장
+            jumin=jumin,
             dsnm=dsnm,
             phone_num=phone_num,
             telecom_gubun=data.get('TELECOMGUBUN')
         )
 
-        # 5. AWS Lambda API 호출
         lambda_url = getattr(settings, 'PARAMETIC_URI', None)
         lambda_token = getattr(settings, 'PARAMETIC_TOKEN', None)
 
@@ -128,7 +154,6 @@ class ParamedicAuthView(APIView):
             "Authorization": lambda_token
         }
 
-        # Lambda로 보낼 때는 프론트에서 받은 그대로 전송 (주민번호 7자리 포함)
         payload = {
             "LOGINOPTION": data['LOGINOPTION'],
             "JUMIN": jumin,
@@ -138,20 +163,14 @@ class ParamedicAuthView(APIView):
         }
 
         try:
-            # verify=False 옵션 없이 호출 (혹은 필요시 추가)
             response = requests.post(lambda_url, json=payload, headers=headers, timeout=15)
             
             if response.status_code == 200:
                 resp_data = response.json()
-                
-                # 성공 여부 체크
                 if resp_data.get('result') == 'SUCCESS' and resp_data.get('data', {}).get('RESULT') == 'SUCCESS':
                     license_list = resp_data['data'].get('LICENSELIST', [])
-                    
                     if license_list:
                         license_info = license_list[0]
-                        
-                        # 유저 정보 업데이트 (Role, License)
                         user.role = True 
                         user.license_kind = license_info.get('LICENSEKIND')
                         user.license_number = license_info.get('LICENSENUM')
@@ -159,12 +178,10 @@ class ParamedicAuthView(APIView):
                         user.is_license_verified = True
                         user.save()
 
-                        # 이력 업데이트
                         auth_history.result = True
                         auth_history.response_msg = "Success"
                         auth_history.save()
 
-                        # 성공 응답 (변경된 유저 정보 포함)
                         return Response({
                             "result": True, 
                             "message": "Verification successful",
@@ -179,7 +196,6 @@ class ParamedicAuthView(APIView):
                     auth_history.response_msg = err_msg
                     auth_history.save()
                     return Response({"result": False, "message": err_msg}, status=status.HTTP_200_OK)
-            
             elif response.status_code == 401:
                 auth_history.response_msg = "401 Unauthorized (Lambda)"
                 auth_history.save()
@@ -194,10 +210,208 @@ class ParamedicAuthView(APIView):
             auth_history.save()
             return Response({"result": False, "message": f"Network Error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+class ProfileUpdateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
 
-import os
-import requests
+    def patch(self, request):
+        user = request.user
+        serializer = ProfileUpdateSerializer(user, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            UserLog.objects.create(user=user, action_type='PROFILE_UPDATE', details=str(serializer.validated_data))
+            return Response({"result": True, "user": UserSerializer(user).data}, status=status.HTTP_200_OK)
+        return Response({"result": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
+class ChangePasswordView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.sign_kind != User.SignKind.EMAIL:
+            return Response({"result": False, "message": "카카오/네이버 유저는 비밀번호를 변경할 수 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = ChangePasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            if not user.check_password(serializer.validated_data['old_password']):
+                return Response({"result": False, "message": "기존 비밀번호가 일치하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
+            
+            user.set_password(serializer.validated_data['new_password'])
+            user.save()
+            UserLog.objects.create(user=user, action_type='PASSWORD_CHANGE', details="User initiated password change")
+            return Response({"result": True, "message": "비밀번호가 변경되었습니다."}, status=status.HTTP_200_OK)
+        return Response({"result": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+class FindEmailView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = FindEmailSerializer(data=request.data)
+        if serializer.is_valid():
+            name = serializer.validated_data['name']
+            birth_date = serializer.validated_data['birth_date']
+            
+            users = User.objects.filter(name=name, birth_date=birth_date, sign_kind=User.SignKind.EMAIL)
+            
+            if users.exists():
+                found_emails = []
+                for user in users:
+                    email = user.email
+                    try:
+                        local, domain = email.split('@')
+                        if len(local) > 2:
+                            masked_local = local[:2] + '*' * (len(local) - 2)
+                        else:
+                            masked_local = local
+                        masked_email = f"{masked_local}@{domain}"
+                        found_emails.append(masked_email)
+                    except:
+                        continue
+
+                is_multiple_accounts = users.count() >= 3
+
+                return Response({
+                    "result": True, 
+                    "emails": found_emails,
+                    "is_multiple_accounts": is_multiple_accounts
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({"result": False, "message": "일치하는 사용자 정보가 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"result": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+class SendAuthCodeView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = SendAuthCodeSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        email = serializer.validated_data['email']
+        birth_date = serializer.validated_data['birth_date']
+        
+        # 1. 이메일 가입자 우선 조회
+        user = User.objects.filter(email=email, sign_kind=User.SignKind.EMAIL).first()
+        
+        if user:
+            # 생년월일 체크
+            if user.birth_date != birth_date:
+                return Response({"result": False, "message": "사용자 정보가 일치하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            # 2. 소셜 가입자 확인
+            if User.objects.filter(email=email).exists():
+                return Response({"result": False, "message": "카카오/네이버 유저는 비밀번호를 찾을 수 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+            else:
+                return Response({"result": False, "message": "등록되지 않은 이메일입니다."}, status=status.HTTP_404_NOT_FOUND)
+
+        code = str(random.randint(100000, 999999))
+        
+        try:
+            record = EmailVerification.objects.get(email=email)
+            
+            if record.created_at.date() == timezone.now().date():
+                if record.send_count >= 5:
+                    return Response({"result": False, "message": "하루 인증 요청 횟수(5회)를 초과했습니다."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            else:
+                record.created_at = timezone.now()
+                record.send_count = 0
+
+            if timezone.now() - record.last_sent_at < timedelta(seconds=15):
+                return Response({"result": False, "message": "잠시 후 다시 시도해주세요. (15초 제한)"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+            record.code = code
+            record.is_verified = False
+            record.send_count += 1
+            record.last_sent_at = timezone.now()
+            record.save()
+            
+        except EmailVerification.DoesNotExist:
+            EmailVerification.objects.create(email=email, code=code)
+
+        try:
+            send_mail(
+                '[Smart ER-Match] 비밀번호 찾기 인증번호',
+                f'인증번호는 [{code}] 입니다. 5분 안에 입력해주세요.',
+                settings.EMAIL_HOST_USER,
+                [email],
+                fail_silently=False,
+            )
+            return Response({"result": True, "message": "인증번호가 발송되었습니다."}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"result": False, "message": f"이메일 발송 실패: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class VerifyAuthCodeView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = VerifyAuthCodeSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        email = serializer.validated_data['email']
+        code = serializer.validated_data['code']
+        
+        # 이메일 가입자 확인
+        user = User.objects.filter(email=email, sign_kind=User.SignKind.EMAIL).first()
+        if not user:
+            if User.objects.filter(email=email).exists():
+                return Response({"result": False, "message": "카카오/네이버 유저입니다."}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"result": False, "message": "사용자를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            record = EmailVerification.objects.get(email=email)
+            
+            if timezone.now() - record.last_sent_at > timedelta(minutes=5):
+                return Response({"result": False, "message": "인증번호 유효 시간이 만료되었습니다."}, status=status.HTTP_400_BAD_REQUEST)
+            
+            if record.code == code:
+                record.is_verified = True
+                record.save()
+                
+                user.can_password_edit = True
+                user.save()
+                
+                return Response({"result": True, "message": "인증되었습니다."}, status=status.HTTP_200_OK)
+            else:
+                return Response({"result": False, "message": "인증번호가 일치하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
+                
+        except EmailVerification.DoesNotExist:
+            return Response({"result": False, "message": "인증 요청 내역이 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+
+class ResetPasswordView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            email = serializer.validated_data['email']
+            birth_date = serializer.validated_data['birth_date']
+            new_password = serializer.validated_data['new_password']
+            
+            # 이메일 가입자 확인
+            user = User.objects.filter(email=email, sign_kind=User.SignKind.EMAIL).first()
+            
+            if user:
+                # 생년월일 체크
+                if user.birth_date != birth_date:
+                    return Response({"result": False, "message": "사용자 정보가 일치하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+
+                if not user.can_password_edit:
+                    return Response({"result": False, "message": "비밀번호 변경 권한이 없습니다. 먼저 인증을 진행해주세요."}, status=status.HTTP_403_FORBIDDEN)
+                
+                user.set_password(new_password)
+                user.can_password_edit = False
+                user.save()
+                
+                UserLog.objects.create(user=user, action_type='PASSWORD_RESET', details="Password reset via email auth")
+                
+                return Response({"result": True, "message": "비밀번호가 재설정되었습니다."}, status=status.HTTP_200_OK)
+            else:
+                # 소셜 가입자 확인
+                if User.objects.filter(email=email).exists():
+                    return Response({"result": False, "message": "카카오/네이버 유저는 비밀번호를 재설정할 수 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+                return Response({"result": False, "message": "사용자를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        
+        return Response({"result": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
 class KakaoLoginView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -207,7 +421,6 @@ class KakaoLoginView(APIView):
         if not code:
             return Response({"error": "Code is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1. 토큰 발급
         token_url = "https://kauth.kakao.com/oauth/token"
         client_id = os.getenv("KAKAO_OAUTH_REST_API_KEY")
         redirect_uri = os.getenv("KAKAO_REDIRECT_URI", "http://13.209.99.166/auth/kakao/callback")
@@ -225,7 +438,6 @@ class KakaoLoginView(APIView):
 
         access_token = token_res.json().get("access_token")
 
-        # 2. 유저 정보 가져오기
         user_info_url = "https://kapi.kakao.com/v2/user/me"
         headers = {"Authorization": f"Bearer {access_token}"}
         user_info_res = requests.get(user_info_url, headers=headers)
@@ -234,39 +446,34 @@ class KakaoLoginView(APIView):
             return Response({"error": "Failed to get user info"}, status=status.HTTP_400_BAD_REQUEST)
 
         user_info = user_info_res.json()
-        kakao_id = str(user_info.get("id")) # 문자로 확실하게 변환
+        kakao_id = str(user_info.get("id"))
         kakao_account = user_info.get("kakao_account", {})
         profile = kakao_account.get("profile", {}) or {}
 
         email = kakao_account.get("email")
         nickname = profile.get("nickname", "")
 
-        # 3. 로그인/회원가입 로직 (수정됨)
         try:
-            # ★ 중요: username이 아니라 고유한 kakao_id로 찾습니다.
             user = User.objects.get(kakao_id=kakao_id)
         except User.DoesNotExist:
-            # 없으면 새로 생성 (이메일, 닉네임 등 설정)
             normalized_email = email if email else f"kakao_{kakao_id}@kakao.local"
             
             user = User.objects.create(
-                username=uuid.uuid4(), # ★ 중요: 중복 방지를 위해 UUID 사용
+                username=uuid.uuid4(),
                 email=normalized_email,
                 sign_kind=User.SignKind.KAKAO,
                 kakao_id=kakao_id,
                 name=nickname if nickname else "Unknown",
             )
-            user.set_unusable_password() # 비밀번호 사용 불가 처리
+            user.set_unusable_password()
             user.save()
 
-        # 4. 토큰 발급
         refresh = RefreshToken.for_user(user)
         return Response({
             'refresh': str(refresh),
             'access': str(refresh.access_token),
             'user': UserSerializer(user).data
         })
-
 
 class NaverLoginView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -321,6 +528,7 @@ class NaverLoginView(APIView):
             )
 
         user_info = user_info_data.get("response", {})
+        print(f"DEBUG: Naver User Info: {user_info}") # 디버깅용 로그 추가
         naver_id = user_info.get("id")
         if not naver_id:
             return Response({"error": "Naver user id is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -329,36 +537,36 @@ class NaverLoginView(APIView):
         name = user_info.get("name")
         mobile = user_info.get("mobile")
         birthyear = user_info.get("birthyear")
-        birthday = user_info.get("birthday")  # MM-DD
-        gender = user_info.get("gender", "")
+        birthday = user_info.get("birthday")
+        gender_raw = user_info.get("gender", "")
 
-        username = str(naver_id)  # username = 네이버 id
+        username = str(naver_id)
         normalized_email = email if email else f"naver_{naver_id}@naver.local"
 
         birth_date = None
         if birthyear and birthday:
             birth_date = f"{birthyear}-{birthday}"
 
+        # 성별 처리 강화 (M, F 외에는 저장 안함)
+        gender = None
+        if gender_raw in ['M', 'F']:
+            gender = gender_raw
+
         try:
-            user = User.objects.get(username=username, sign_kind=User.SignKind.NAVER)
+            user = User.objects.get(naver_id=str(naver_id))
         except User.DoesNotExist:
-            user, _ = User.objects.get_or_create(
-                username=username,
+            user = User.objects.create(
+                username=uuid.uuid4(),
                 email=normalized_email,
                 sign_kind=User.SignKind.NAVER,
-                defaults={
-                    "name": name if name else "",
-                    "phone_number": mobile if mobile else "",
-                    "birth_date": birth_date,
-                    "gender": gender if gender else "",
-                    "naver_id": str(naver_id),
-                },
+                naver_id=str(naver_id),
+                name=name if name else "",
+                phone_number=mobile if mobile else "",
+                birth_date=birth_date,
+                gender=gender,
             )
             user.set_unusable_password()
-            user.save(update_fields=["password"])
-        if not user.naver_id:
-            user.naver_id = str(naver_id)
-            user.save(update_fields=["naver_id"])
+            user.save()
 
         refresh = RefreshToken.for_user(user)
         return Response({
@@ -366,7 +574,3 @@ class NaverLoginView(APIView):
             'access': str(refresh.access_token),
             'user': UserSerializer(user).data
         })
-
-
-
-

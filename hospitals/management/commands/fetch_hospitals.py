@@ -1,11 +1,12 @@
 import requests
 import os
+import re
 from django.db import transaction
 from django.core.management.base import BaseCommand
 from hospitals.models import Hospital, Category, UpdateLog
 
 class Command(BaseCommand):
-    help = '기존 데이터를 모두 지우고, 최신 응급의료기관 목록으로 갱신합니다.'
+    help = '기존 데이터를 모두 지우고, 최신 응급의료기관 목록으로 갱신합니다. (시/도 명칭 표준화 포함)'
 
     def handle(self, *args, **options):
         # 1. API 설정
@@ -16,10 +17,35 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR("NMC_API_KEY 환경변수가 설정되지 않았습니다."))
             return
 
+        # 시/도 명칭 표준화 매핑
+        CITY_MAPPING = {
+            "서울": "서울특별시",
+            "부산": "부산광역시",
+            "대구": "대구광역시",
+            "인천": "인천광역시",
+            "광주": "광주광역시",
+            "대전": "대전광역시",
+            "울산": "울산광역시",
+            "세종": "세종특별자치시",
+            "세종특별자치시": "세종특별자치시", # 이미 풀네임인 경우도 매핑
+            "경기": "경기도",
+            "강원": "강원특별자치도",
+            "강원특별자치도": "강원특별자치도",
+            "충북": "충청북도",
+            "충남": "충청남도",
+            "전북": "전라북도", # 요청 반영
+            "전북특별자치도": "전라북도", # 요청 반영
+            "전남": "전라남도",
+            "경북": "경상북도",
+            "경남": "경상남도",
+            "제주": "제주특별자치도",
+            "제주특별자치도": "제주특별자치도"
+        }
+
         # numOfRows를 넉넉하게 설정 (전체 리스트)
         params = {
             'serviceKey': KEY,
-            'numOfRows': 5000,  # 전국 응급의료기관 수는 500개 내외이나 넉넉히
+            'numOfRows': 5000,
             'pageNo': 1,
             '_type': 'json'
         }
@@ -29,14 +55,12 @@ class Command(BaseCommand):
         try:
             response = requests.get(url, params=params, timeout=30)
             
-            # JSON 파싱 시도 (서비스키 에러 시 XML로 올 수 있음)
             try:
                 data = response.json()
             except ValueError:
                 self.stdout.write(self.style.ERROR(f"JSON 파싱 실패. 응답 내용: {response.text[:200]}"))
                 return
 
-            # 응답 구조 확인
             if 'response' not in data or 'body' not in data['response'] or 'items' not in data['response']['body']:
                 self.stdout.write(self.style.ERROR(f"API 응답 구조 오류: {data}"))
                 return
@@ -50,7 +74,6 @@ class Command(BaseCommand):
             if isinstance(item_list, dict):
                 item_list = [item_list]
             
-            # 주소 전처리 및 카테고리 수집
             processed_hospitals = []
             category_names = set()
 
@@ -59,12 +82,19 @@ class Command(BaseCommand):
                 if not full_address:
                     continue
                 
-                addr_parts = full_address.split()
-                first_address = addr_parts[0] if len(addr_parts) > 0 else ''
+                # 모든 종류의 공백 제거 후 split (주소 파싱 강화)
+                # 정규식으로 연속된 공백을 하나로 치환 후 split
+                clean_address = re.sub(r'\s+', ' ', full_address).strip()
+                addr_parts = clean_address.split(' ')
+                
+                raw_first = addr_parts[0] if len(addr_parts) > 0 else ''
+                
+                # 매핑 적용
+                first_address = CITY_MAPPING.get(raw_first, raw_first)
+                
                 second_address = addr_parts[1] if len(addr_parts) > 1 else ''
                 third_address = ' '.join(addr_parts[2:]) if len(addr_parts) > 2 else ''
 
-                # 카테고리용 (시/도)
                 if first_address:
                     category_names.add(first_address)
 
@@ -89,20 +119,15 @@ class Command(BaseCommand):
                 )
                 processed_hospitals.append(hospital)
 
-            # 3. 트랜잭션: 지우고 쓰는 과정을 '하나의 작업'으로 묶음
             with transaction.atomic():
-                # (1) 기존 데이터 전체 삭제 (Cascade로 하위 데이터도 삭제됨)
                 Hospital.objects.all().delete()
                 Category.objects.all().delete()
 
-                # (2) 카테고리 생성
                 category_objects = [Category(name=name) for name in sorted(category_names)]
                 Category.objects.bulk_create(category_objects)
 
-                # (3) 새 병원 데이터 저장
                 Hospital.objects.bulk_create(processed_hospitals)
                 
-                # (4) 업데이트 로그 기록
                 UpdateLog.objects.update_or_create(update_key='base', defaults={})
 
             self.stdout.write(self.style.SUCCESS(f'갱신 완료! 총 {len(processed_hospitals)}개의 병원 데이터와 {len(category_objects)}개의 카테고리가 저장되었습니다.'))

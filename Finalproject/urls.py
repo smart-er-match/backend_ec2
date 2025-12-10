@@ -30,7 +30,6 @@ def test_origin(request):
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("accounts/", include("accounts.urls")),
-    path("paramedic/apply/", ParamedicAuthView.as_view(), name='paramedic_apply_root'),
     path("hospitals/", include("hospitals.urls")),
 ]
 
