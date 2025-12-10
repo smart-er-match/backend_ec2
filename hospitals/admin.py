@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Hospital, HospitalRealtimeStatus, HospitalSevereMessage, UserLocationLog, Category, Review, Comment
+from .models import Hospital, HospitalRealtimeStatus, HospitalSevereMessage, UserLocationLog, Category, SymptomSearchLog
 
 @admin.register(Hospital)
 class HospitalAdmin(admin.ModelAdmin):
@@ -22,14 +22,11 @@ class UserLocationLogAdmin(admin.ModelAdmin):
     list_display = ('user_email', 'location_text', 'created_at')
     list_filter = ('created_at',)
 
+@admin.register(SymptomSearchLog)
+class SymptomSearchLogAdmin(admin.ModelAdmin):
+    list_display = ('user_email', 'symptoms', 'latitude', 'longitude', 'radius', 'created_at')
+    list_filter = ('created_at',)
+
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
     list_display = ('name',)
-
-@admin.register(Review)
-class ReviewAdmin(admin.ModelAdmin):
-    list_display = ('hospital', 'user', 'rating', 'created_at')
-
-@admin.register(Comment)
-class CommentAdmin(admin.ModelAdmin):
-    list_display = ('review', 'user', 'created_at')

@@ -4,8 +4,8 @@ from rest_framework import status, permissions
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import timedelta
-from .models import UserLocationLog, HospitalRealtimeStatus, Hospital, Review, Comment
-from .serializers import HospitalResponseSerializer, ReviewSerializer, CommentSerializer
+from .models import UserLocationLog, HospitalRealtimeStatus, Hospital, Review, Comment, SymptomSearchLog
+from .serializers import HospitalResponseSerializer, ReviewSerializer, CommentSerializer, HospitalListSerializer
 from .constants import HOSPITAL_FIELD_DESC
 from django.conf import settings
 import requests
@@ -94,8 +94,28 @@ class GeneralSymptomView(APIView):
         if user_lat is None or user_lon is None:
              return Response({"result": False, "message": "User location not found."}, status=status.HTTP_400_BAD_REQUEST)
 
-        radius = user.radius if user.radius else 10
+        req_radius = data.get('radius')
+        if req_radius:
+            try:
+                radius = int(req_radius)
+            except:
+                radius = 10
+        else:
+            radius = user.radius if user.radius else 10
         
+        # 로그 저장
+        try:
+            SymptomSearchLog.objects.create(
+                user=user,
+                user_email=user.email,
+                latitude=user_lat,
+                longitude=user_lon,
+                radius=radius,
+                symptoms=",".join(symptoms) if symptoms else ""
+            )
+        except Exception as e:
+            print(f"SymptomSearchLog Save Error: {e}")
+
         recommended_fields = self.get_recommended_fields(symptoms)
         
         if USE_NMC_API:
@@ -171,7 +191,7 @@ class GeneralSymptomView(APIView):
         data = {
             "model": "gpt-4o-mini",
             "messages": [
-                {"role": "system", "content": "You are a medical assistant. Return only JSON."},
+                {"role": "system", "content": "You are a medical assistant. Return only JSON."}, 
                 {"role": "user", "content": prompt}
             ]
         }
@@ -295,6 +315,30 @@ class GeneralSymptomView(APIView):
                 matched_reasons.append(f"{HOSPITAL_FIELD_DESC.get(field, field)} ({weight}점)")
         
         return score, matched_reasons
+
+class HospitalListView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        hospitals = Hospital.objects.all().order_by('first_address', 'name')
+        
+        # 카테고리별 그룹화
+        grouped_data = {}
+        # 전체 리스트 serialize
+        serializer = HospitalListSerializer(hospitals, many=True)
+        data = serializer.data
+        
+        for item in data:
+            category = item.get('first_address') or "기타"
+            if category not in grouped_data:
+                grouped_data[category] = []
+            grouped_data[category].append(item)
+            
+        return Response({
+            "result": True,
+            "count": hospitals.count(),
+            "data": grouped_data
+        }, status=status.HTTP_200_OK)
 
 class ReviewView(APIView):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]

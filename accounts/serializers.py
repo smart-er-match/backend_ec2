@@ -141,9 +141,27 @@ class ParamedicAuthSerializer(serializers.Serializer):
         return attrs
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
+    phone_number = serializers.RegexField(
+        regex=r'^\d{11}$',
+        min_length=11,
+        max_length=11,
+        error_messages={'invalid': '전화번호는 하이픈 없이 숫자 11자리여야 합니다.'},
+        required=False
+    )
+    name = serializers.CharField(required=False, allow_blank=False)
+    gender = serializers.CharField(required=False, allow_blank=False)
+
     class Meta:
         model = User
         fields = ['name', 'phone_number', 'gender']
+
+    def validate(self, attrs):
+        for field in ['name', 'phone_number', 'gender']:
+            if field in attrs:
+                val = attrs.get(field)
+                if not str(val).strip():
+                    raise serializers.ValidationError({field: 'This field cannot be blank.'})
+        return attrs
 
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(required=True)

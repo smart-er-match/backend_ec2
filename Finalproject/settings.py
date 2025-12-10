@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'hospitals',
     'corsheaders',
     "rest_framework",
+    "rest_framework_simplejwt",
     "django_cron",
     "rest_framework.authtoken",
     "django_extensions",

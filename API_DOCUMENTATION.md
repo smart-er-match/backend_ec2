@@ -43,7 +43,7 @@
 
 ### 프로필 수정
 *   **URL:** `/accounts/profile/update/`
-*   **Method:** `PUT`
+*   **Method:** `PATCH`
 *   **Permission:** IsAuthenticated
 *   **Body:** `{"name": "...", "phone_number": "...", "gender": "..."}`
 

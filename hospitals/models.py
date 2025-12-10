@@ -1,5 +1,6 @@
 from django.db import models
 from accounts.models import User
+import json
 
 class Category(models.Model):
     name = models.CharField(max_length=50, unique=True)
@@ -125,16 +126,28 @@ class HospitalRealtimeStatus(models.Model):
 
 class HospitalSevereMessage(models.Model):
     hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='severe_messages')
-    message = models.TextField(blank=True, null=True)
-    message_type = models.CharField(max_length=20, blank=True, null=True)
-    severe_code = models.CharField(max_length=10, blank=True, null=True)
-    severe_name = models.CharField(max_length=50, blank=True, null=True)
-    display_yn = models.CharField(max_length=5, blank=True, null=True)
-    display_method = models.CharField(max_length=10, blank=True, null=True)
-    start_time = models.CharField(max_length=20, blank=True, null=True)
-    end_time = models.CharField(max_length=20, blank=True, null=True)
+    message = models.TextField(blank=True, null=True) # symBlkMsg
+    message_type = models.CharField(max_length=20, blank=True, null=True) # symBlkMsgTyp (응급/중증)
+    severe_code = models.CharField(max_length=10, blank=True, null=True) # symTypCod (Y000 등)
+    severe_name = models.CharField(max_length=50, blank=True, null=True) # symTypCodMag
+    display_yn = models.CharField(max_length=5, blank=True, null=True) # symOutDspYon (Y/N)
+    display_method = models.CharField(max_length=10, blank=True, null=True) # symOutDspMth
+    start_time = models.CharField(max_length=20, blank=True, null=True) # symBlkSttDtm
+    end_time = models.CharField(max_length=20, blank=True, null=True) # symBlkEndDtm
     
     created_at = models.DateTimeField(auto_now_add=True)
+
+class SymptomSearchLog(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
+    user_email = models.EmailField(blank=True, null=True)
+    latitude = models.FloatField()
+    longitude = models.FloatField()
+    radius = models.IntegerField(default=10)
+    symptoms = models.TextField(blank=True, null=True) # 증상 목록 (쉼표 등으로 구분된 문자열)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user_email} - {self.symptoms} @ ({self.latitude},{self.longitude})"
 
 class UpdateLog(models.Model):
     update_key = models.CharField(max_length=20, primary_key=True)
@@ -146,7 +159,7 @@ class UserLocationLog(models.Model):
     sign_kind = models.IntegerField(default=1)
     latitude = models.FloatField()
     longitude = models.FloatField()
-    radius = models.IntegerField(default=10) 
+    radius = models.IntegerField(default=10) # 반경 (km)
     location_text = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

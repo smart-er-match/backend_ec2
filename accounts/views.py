@@ -25,6 +25,29 @@ class SignupView(generics.CreateAPIView):
     serializer_class = SignupSerializer
     permission_classes = [permissions.AllowAny]
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        
+        # 중복 가입 확인 로직
+        user_data = serializer.data
+        name = request.data.get('name')
+        birth_date = request.data.get('birth_date')
+        
+        duplicate_count = 0
+        if name and birth_date:
+            duplicate_count = User.objects.filter(
+                name=name, 
+                birth_date=birth_date, 
+                sign_kind=User.SignKind.EMAIL
+            ).count()
+        
+        user_data['is_multiple_accounts'] = duplicate_count >= 3
+        
+        return Response(user_data, status=status.HTTP_201_CREATED, headers=headers)
+
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -190,7 +213,7 @@ class ParamedicAuthView(APIView):
 class ProfileUpdateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    def put(self, request):
+    def patch(self, request):
         user = request.user
         serializer = ProfileUpdateSerializer(user, data=request.data, partial=True)
         if serializer.is_valid():
@@ -228,18 +251,29 @@ class FindEmailView(APIView):
             birth_date = serializer.validated_data['birth_date']
             
             users = User.objects.filter(name=name, birth_date=birth_date, sign_kind=User.SignKind.EMAIL)
+            
             if users.exists():
-                email = users.first().email
-                try:
-                    local, domain = email.split('@')
-                    if len(local) > 2:
-                        masked_local = local[:2] + '*' * (len(local) - 2)
-                    else:
-                        masked_local = local
-                    masked_email = f"{masked_local}@{domain}"
-                    return Response({"result": True, "email": masked_email}, status=status.HTTP_200_OK)
-                except:
-                    return Response({"result": False, "message": "이메일 형식이 올바르지 않습니다."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                found_emails = []
+                for user in users:
+                    email = user.email
+                    try:
+                        local, domain = email.split('@')
+                        if len(local) > 2:
+                            masked_local = local[:2] + '*' * (len(local) - 2)
+                        else:
+                            masked_local = local
+                        masked_email = f"{masked_local}@{domain}"
+                        found_emails.append(masked_email)
+                    except:
+                        continue
+
+                is_multiple_accounts = users.count() >= 3
+
+                return Response({
+                    "result": True, 
+                    "emails": found_emails,
+                    "is_multiple_accounts": is_multiple_accounts
+                }, status=status.HTTP_200_OK)
             else:
                 return Response({"result": False, "message": "일치하는 사용자 정보가 없습니다."}, status=status.HTTP_404_NOT_FOUND)
         return Response({"result": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
@@ -494,6 +528,7 @@ class NaverLoginView(APIView):
             )
 
         user_info = user_info_data.get("response", {})
+        print(f"DEBUG: Naver User Info: {user_info}") # 디버깅용 로그 추가
         naver_id = user_info.get("id")
         if not naver_id:
             return Response({"error": "Naver user id is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -503,7 +538,7 @@ class NaverLoginView(APIView):
         mobile = user_info.get("mobile")
         birthyear = user_info.get("birthyear")
         birthday = user_info.get("birthday")
-        gender = user_info.get("gender", "")
+        gender_raw = user_info.get("gender", "")
 
         username = str(naver_id)
         normalized_email = email if email else f"naver_{naver_id}@naver.local"
@@ -512,26 +547,26 @@ class NaverLoginView(APIView):
         if birthyear and birthday:
             birth_date = f"{birthyear}-{birthday}"
 
+        # 성별 처리 강화 (M, F 외에는 저장 안함)
+        gender = None
+        if gender_raw in ['M', 'F']:
+            gender = gender_raw
+
         try:
-            user = User.objects.get(username=username, sign_kind=User.SignKind.NAVER)
+            user = User.objects.get(naver_id=str(naver_id))
         except User.DoesNotExist:
-            user, _ = User.objects.get_or_create(
-                username=username,
+            user = User.objects.create(
+                username=uuid.uuid4(),
                 email=normalized_email,
                 sign_kind=User.SignKind.NAVER,
-                defaults={
-                    "name": name if name else "",
-                    "phone_number": mobile if mobile else "",
-                    "birth_date": birth_date,
-                    "gender": gender if gender else "",
-                    "naver_id": str(naver_id),
-                },
+                naver_id=str(naver_id),
+                name=name if name else "",
+                phone_number=mobile if mobile else "",
+                birth_date=birth_date,
+                gender=gender,
             )
             user.set_unusable_password()
-            user.save(update_fields=["password"])
-        if not user.naver_id:
-            user.naver_id = str(naver_id)
-            user.save(update_fields=["naver_id"])
+            user.save()
 
         refresh = RefreshToken.for_user(user)
         return Response({

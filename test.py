@@ -1,55 +1,45 @@
 import requests
 import os
 from dotenv import load_dotenv
-import xml.dom.minidom
+import json
 
 load_dotenv()
 
 def test_api():
-    url = "http://apis.data.go.kr/B552657/ErmctInfoInqireService/getEgytLcinfoInqire"
+    url = "http://apis.data.go.kr/B552657/ErmctInfoInqireService/getEgytListInfoInqire"
     api_key = os.getenv("NMC_API_KEY")
 
     if not api_key:
         print("Error: NMC_API_KEY not found in .env")
         return
 
-    # 서울 강남역, XML 요청
     params = {
         "serviceKey": api_key,
-        "WGS84_LON": "127.0276", 
-        "WGS84_LAT": "37.4979", 
-        "numOfRows": 100,
-        "pageNo": 1
+        "numOfRows": 5000,
+        "pageNo": 1,
+        "_type": "json"
     }
 
     try:
-        response = requests.get(url, params=params, timeout=10)
-        
-        print(f"Full Request URL: {response.url}")
-        print(f"Status Code: {response.status_code}")
+        response = requests.get(url, params=params, timeout=30)
         
         if response.status_code == 200:
-            # XML 파싱 및 예쁘게 출력
-            try:
-                xml_str = response.text
-                dom = xml.dom.minidom.parseString(xml_str)
-                pretty_xml = dom.toprettyxml()
-                
-                print("\n=== FULL XML RESPONSE ===")
-                print(pretty_xml)
-                print("=========================\n")
-                
-                # totalCount 확인
-                total_counts = dom.getElementsByTagName('totalCount')
-                if total_counts:
-                    print(f"Total Count: {total_counts[0].firstChild.data}")
-                
-                items = dom.getElementsByTagName('item')
-                print(f"Fetched Items Tag Count: {len(items)}")
-
-            except Exception as e:
-                print(f"XML Parsing Failed: {e}")
-                print(response.text)
+            data = response.json()
+            items = data.get('response', {}).get('body', {}).get('items', {}).get('item', [])
+            if isinstance(items, dict): items = [items]
+            
+            print(f"Fetched {len(items)} items.")
+            
+            for item in items:
+                addr = item.get('dutyAddr', '')
+                if "전남" in addr or "전라남도" in addr:
+                    print(f"[{item.get('dutyName')}] {addr}")
+                    # split 결과 확인
+                    parts = addr.split()
+                    print(f"Split: {parts}")
+                    if parts:
+                        print(f"First: '{parts[0]}'")
+                        
         else:
             print("API Request Failed.")
 

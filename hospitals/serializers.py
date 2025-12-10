@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from rest_framework import serializers
 from .models import Hospital, Review, Comment
 from accounts.serializers import UserSerializer
 
@@ -46,3 +47,8 @@ class ReviewSerializer(serializers.ModelSerializer):
         if request and request.user:
             return obj.user == request.user
         return False
+
+class HospitalListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Hospital
+        fields = ['hpid', 'name', 'address', 'first_address', 'second_address', 'third_address', 'main_phone', 'emergency_phone', 'latitude', 'longitude']
