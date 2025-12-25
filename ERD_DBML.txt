@@ -1,0 +1,134 @@
+// Smart ER Match Database Schema (DBML)
+// Use this code at https://dbdiagram.io
+
+Table accounts_user {
+  id integer [primary key]
+  email varchar
+  name varchar
+  sign_kind integer [note: '1: Email, 2: Kakao, 3: Naver, 4: Google']
+  google_id varchar
+  service_key text
+  token_status varchar
+  remaining_requests integer [default: 10]
+  is_withdrawn boolean [default: false]
+  withdrawn_at datetime
+  latitude float
+  longitude float
+  location varchar
+  radius integer
+}
+
+Table hospitals_category {
+  id integer [primary key]
+  name varchar [unique]
+}
+
+Table hospitals_hospital {
+  hpid varchar [primary key]
+  name varchar
+  address varchar
+  first_address varchar
+  second_address varchar
+  third_address varchar
+  category_name varchar
+  main_phone varchar
+  emergency_phone varchar
+  latitude float
+  longitude float
+  location geography
+  description text
+  updated_at datetime
+}
+
+Table hospitals_review {
+  id integer [primary key]
+  hospital_id varchar
+  user_id integer
+  content text
+  rating integer
+  created_at datetime
+  updated_at datetime
+}
+
+Table hospitals_comment {
+  id integer [primary key]
+  review_id integer
+  user_id integer
+  content text
+  created_at datetime
+  updated_at datetime
+}
+
+Table hospitals_hospitalrealtimestatus {
+  id integer [primary key]
+  hospital_id varchar [unique]
+  hvec integer [note: '응급실 일반 병상']
+  hvctayn varchar [note: 'CT 가용여부']
+  hvmriayn varchar [note: 'MRI 가용여부']
+  hvcc integer [note: '신경과 중환자실']
+  hvicc integer [note: '일반 중환자실']
+  last_updated datetime
+}
+
+Table hospitals_hospitalseveremessage {
+  id integer [primary key]
+  hospital_id varchar
+  message text
+  message_type varchar
+  severe_code varchar
+  created_at datetime
+}
+
+Table hospitals_symptomsearchlog {
+  id integer [primary key]
+  user_id integer
+  user_email varchar
+  latitude float
+  longitude float
+  symptoms text
+  gender varchar
+  age varchar
+  ai_recommended_fields json
+  openai_comment text
+  created_at datetime
+}
+
+Table hospitals_userlocationlog {
+  id integer [primary key]
+  user_id integer
+  latitude float
+  longitude float
+  location_text varchar
+  created_at datetime
+}
+
+Table hospitals_bookmark {
+  id integer [primary key]
+  user_id integer
+  hospital_id varchar
+  created_at datetime
+}
+
+Table hospitals_chatsession {
+  session_id uuid [primary key]
+  user_id integer
+  state varchar [note: 'INIT, CHECK_HISTORY, CHECK_LOCATION, DONE']
+  collected_data json
+  history json
+  ai_model_used varchar
+  updated_at datetime
+  created_at datetime
+}
+
+// Relationships (Foreign Keys)
+Ref: hospitals_review.hospital_id > hospitals_hospital.hpid
+Ref: hospitals_review.user_id > accounts_user.id
+Ref: hospitals_comment.review_id > hospitals_review.id
+Ref: hospitals_comment.user_id > accounts_user.id
+Ref: hospitals_hospitalrealtimestatus.hospital_id - hospitals_hospital.hpid [delete: cascade]
+Ref: hospitals_hospitalseveremessage.hospital_id > hospitals_hospital.hpid
+Ref: hospitals_symptomsearchlog.user_id > accounts_user.id
+Ref: hospitals_userlocationlog.user_id > accounts_user.id
+Ref: hospitals_bookmark.user_id > accounts_user.id
+Ref: hospitals_bookmark.hospital_id > hospitals_hospital.hpid
+Ref: hospitals_chatsession.user_id > accounts_user.id
